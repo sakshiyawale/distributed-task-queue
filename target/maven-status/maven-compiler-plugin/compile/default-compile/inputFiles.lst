@@ -1,0 +1,17 @@
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/controller/TaskController.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/model/User.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/service/UserService.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/config/SecurityConfig.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/model/Role.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/config/JwtAuthenticationFilter.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/service/TaskService.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/config/WebSocketConfig.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/controller/HomeController.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/Task.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/model/LoginResponse.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/controller/AuthController.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/TaskQueueApplication.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/worker/TaskWorker.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/model/UserRepository.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/service/JwtService.java
+/Users/Shared/Files From d.localized/SXY240011/My Projects/Distributed Task Queue System/src/main/java/com/taskqueue/service/CustomUserDetailsService.java
