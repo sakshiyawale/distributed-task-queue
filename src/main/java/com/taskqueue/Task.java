@@ -35,7 +35,7 @@ public class Task {
     private long executionTimeMs;
 
     public enum TaskStatus {
-        PENDING, PROCESSING, COMPLETED, FAILED, RETRYING, PAUSED
+        PENDING, PROCESSING, COMPLETED, FAILED, RETRYING, PAUSED, CANCELLED
     }
 
     public enum Priority {

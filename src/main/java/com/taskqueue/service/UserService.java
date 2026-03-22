@@ -3,18 +3,23 @@ package com.taskqueue.service;
 import com.taskqueue.model.User;
 import com.taskqueue.model.UserRepository;
 import com.taskqueue.model.Role;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
 
 @Service
 public class UserService {
-    @Autowired
-    private UserRepository userRepository;
 
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    private final UserRepository userRepository;
+    // Injected from SecurityConfig — shares the same BCryptPasswordEncoder bean
+    // instead of creating a second instance with new BCryptPasswordEncoder()
+    private final PasswordEncoder passwordEncoder;
+
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+        this.userRepository  = userRepository;
+        this.passwordEncoder = passwordEncoder;
+    }
 
     public User registerUser(String username, String email, String password) {
         User user = new User();
@@ -36,4 +41,4 @@ public class UserService {
     public boolean checkPassword(String rawPassword, String encodedPassword) {
         return passwordEncoder.matches(rawPassword, encodedPassword);
     }
-} 
+}

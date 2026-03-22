@@ -1,253 +1,256 @@
 # Distributed Task Queue System (Mini Celery)
 
-A comprehensive distributed task queue system built with Java Spring Boot, Apache Kafka, Redis, and React.js. This system provides asynchronous task processing, real-time monitoring, retry mechanisms, scalable worker execution, and secure user authentication.
+A distributed task queue system built with Java Spring Boot, Apache Kafka, Redis, and React.js. Provides asynchronous task processing, real-time monitoring, priority queues, exponential backoff retry, CANCELLED status, paginated task listing, and JWT-secured REST + WebSocket APIs.
 
-## 🏗️ Architecture
+## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   React.js      │    │   Spring Boot   │    │     Kafka       │
-│   Dashboard     │◄──►│   Backend       │◄──►│   Message       │
-│   (Frontend)    │    │   (API/Worker)  │    │   Queue         │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │     Redis       │
-                       │   (Cache/State) │
-                       └─────────────────┘
+┌──────────────────┐     ┌──────────────────────────────────────┐     ┌────────────────────┐
+│  React Frontend  │────►│         Spring Boot Backend          │────►│   Apache Kafka     │
+│  localhost:3000  │◄────│  JWT Filter → Controller → Service   │     │  Priority Topics   │
+│  Material-UI v7  │     │  @Async ThreadPoolTaskExecutor        │     │  + task-retry      │
+│  SockJS/STOMP    │◄────│  WebSocket (STOMP /ws)               │     └────────────────────┘
+└──────────────────┘     └──────────────────────────────────────┘              │
+                                         │                                      ▼
+                                         ▼                             ┌────────────────────┐
+                                  ┌─────────────┐                     │     TaskWorker     │
+                                  │    Redis    │◄────────────────────│  Strategy Pattern  │
+                                  │  :6379      │                     │  @Async Execution  │
+                                  └─────────────┘                     └────────────────────┘
+                                         │
+                                         ▼
+                                  ┌─────────────┐
+                                  │  H2 (users) │
+                                  └─────────────┘
 ```
 
-## 🚀 Features
+## Features
 
-- **User Authentication**: Secure registration, login, JWT-based API protection
-- **Asynchronous Task Processing**: Submit tasks that run in the background
-- **Priority Queues**: Support for LOW, NORMAL, HIGH, and URGENT priority levels
-- **Retry Mechanism**: Automatic retry with exponential backoff for failed tasks
-- **Real-time Monitoring**: WebSocket-based dashboard for live task updates
-- **Scalable Workers**: Docker-based worker scaling
-- **Task Types**: Built-in support for email, image processing, data export, and report generation
-- **Persistence**: Redis-based task state management
-- **RESTful API**: Complete REST API for task management
-- **Statistics**: Comprehensive task execution statistics
+- **Priority Queues**: URGENT / HIGH / NORMAL / LOW — separate Kafka topics, consumed round-robin
+- **Strategy Pattern**: `TaskProcessor` interface — `EmailTaskProcessor`, `ImageTaskProcessor`, `DataExportTaskProcessor`, `ReportTaskProcessor`, `GenericTaskProcessor` (fallback). New types added by creating a `@Component` class — no `if/switch` changes needed.
+- **Non-blocking Workers**: `@Async("taskExecutor")` offloads execution to a `ThreadPoolTaskExecutor` (5–20 threads, queue 100). Kafka consumer threads are never blocked.
+- **Manual Kafka Ack**: `ack-mode=manual`, `enable-auto-commit=false`. Offset committed immediately after task is accepted for async execution.
+- **Idempotency**: Worker re-fetches task state from Redis before executing. Skips if already `COMPLETED` or `CANCELLED` (handles Kafka redelivery after rebalance).
+- **Exponential Backoff Retry**: `delaySeconds = 2^retryCount` (2s, 4s, 8s). Delay is enforced by `ScheduledExecutorService.schedule()` before re-enqueueing to `task-retry` topic.
+- **CANCELLED Status**: Distinct from `FAILED` — user-initiated cancellation. Does not increment retryCount. Worker skips re-execution via idempotency check.
+- **Paginated Task List**: `GET /api/tasks?page=0&size=20` uses Redis `LRANGE` offset/limit. Avoids loading all task IDs at once.
+- **Non-blocking Redis SCAN**: `getActiveWorkers()` uses cursor-based `SCAN` instead of blocking `KEYS`.
+- **Role-based Access**: `DELETE /api/tasks/{id}` requires `ROLE_ADMIN` (`@PreAuthorize("hasRole('ADMIN')")`).
+- **Secure JWT**: Secret injected via `JWT_SECRET` env var (min 32 chars). Never hardcoded.
+- **Configurable CORS**: Origins set via `CORS_ORIGINS` env var — no code change needed for deployment.
+- **Real-time Updates**: WebSocket (STOMP) pushes task state changes to all connected frontends instantly.
 
-## 🛠️ Technology Stack
+## Technology Stack
 
-- **Backend**: Java 11, Spring Boot 2.7, Spring Security, Spring Kafka, JWT
-- **Message Queue**: Apache Kafka
-- **Cache/Storage**: Redis, H2 (for users)
-- **Frontend**: React.js with Material-UI, TypeScript
-- **Containerization**: Docker & Docker Compose
-- **Build Tool**: Maven
+| Layer | Technology |
+|---|---|
+| Backend | Java 11, Spring Boot 2.7, Spring Security, Spring Kafka |
+| Auth | JWT (JJWT 0.9.1), BCrypt |
+| Message Queue | Apache Kafka (5 topics) |
+| Cache / State | Redis (key-value + List) |
+| User Storage | H2 (in-memory) |
+| Frontend | React 19, TypeScript, Material-UI v7, Axios, SockJS/STOMP |
+| Containers | Docker & Docker Compose |
+| Build | Maven 3.6+ |
 
-## 📋 Prerequisites
+## Prerequisites
 
-- Java 11 or higher
+- Java 11+
 - Maven 3.6+
 - Docker & Docker Compose
-- Node.js 14+ (for React dashboard)
+- Node.js 18+ (for React frontend)
 
-## 🚦 How to Run the Project
+## Running the Project
 
-### 1. Clone the Repository
+### 1. Start Infrastructure
 
 ```bash
-git clone https://github.com/yourusername/distributed-task-queue.git
-cd distributed-task-queue
+docker-compose up -d zookeeper kafka redis
 ```
 
-### 2. Start Infrastructure Services
+### 2. Set Environment Variables (optional — defaults work for local dev)
 
 ```bash
-# Start Kafka, Zookeeper, and Redis
-docker-compose up -d kafka redis zookeeper
+export JWT_SECRET="dev-secret-change-me-in-production-min-32-chars"
+export CORS_ORIGINS="http://localhost:3000"
 ```
 
-### 3. Start the Backend (Spring Boot)
+### 3. Start the Backend
 
 ```bash
-# In the project root
-git pull # (if needed)
 mvn clean package
 mvn spring-boot:run
+# Backend runs on http://localhost:8080
 ```
-- The backend will run on [http://localhost:8080](http://localhost:8080)
 
-### 4. Start the Frontend (React)
+### 4. Start the Frontend
 
 ```bash
 cd task-queue-frontend
 npm install
 npm start
-```
-- The frontend will run on [http://localhost:3000](http://localhost:3000)
-
-### 5. Access the Application
-
-- **Frontend Dashboard**: http://localhost:3000
-- **API**: http://localhost:8080
-- **H2 Console**: http://localhost:8080/h2-console (JDBC URL: `jdbc:h2:mem:testdb`)
-
-## 🔐 Authentication
-
-- **Register**: Create a new user account via the frontend or POST `/auth/register`
-- **Login**: Obtain a JWT token via the frontend or POST `/auth/login`
-- **JWT**: All API requests (except `/auth/*`) require the `Authorization: Bearer <token>` header
-- **Logout**: Use the frontend logout button
-
-### Authentication Endpoints
-
-```http
-POST /auth/register
-{
-  "username": "youruser",
-  "email": "your@email.com",
-  "password": "yourpassword"
-}
-
-POST /auth/login
-{
-  "username": "youruser",
-  "password": "yourpassword"
-}
-
-# Response:
-{
-  "token": "<JWT_TOKEN>",
-  "username": "youruser",
-  "role": "USER"
-}
+# Frontend runs on http://localhost:3000
 ```
 
-### Protecting API Requests
-Add the JWT token to the `Authorization` header:
+### 5. Access
 
-```
-Authorization: Bearer <JWT_TOKEN>
-```
+| URL | Description |
+|---|---|
+| http://localhost:3000 | React dashboard |
+| http://localhost:8080 | REST API |
+| http://localhost:8080/h2-console | H2 DB console (JDBC: `jdbc:h2:mem:testdb`) |
 
-## 🐳 Docker Deployment
-
-### Complete Stack Deployment
+### Docker (full stack)
 
 ```bash
-# Build and start all services
 docker-compose up --build
 
 # Scale workers
 docker-compose up --scale task-queue-app=3
 ```
 
-### Individual Service Management
+## Environment Variables
 
-```bash
-# Start only infrastructure
-docker-compose up -d kafka redis zookeeper
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_SECRET` | `dev-secret-change-me-in-production-min-32-chars` | HS256 signing key — **change in production** |
+| `JWT_EXPIRATION_MS` | `86400000` | Token lifetime in ms (24 hours) |
+| `CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origin(s) |
+| `TASK_WORKER_CORE_POOL_SIZE` | `5` | ThreadPoolTaskExecutor core threads |
+| `TASK_WORKER_MAX_POOL_SIZE` | `20` | ThreadPoolTaskExecutor max threads |
+| `TASK_WORKER_QUEUE_CAPACITY` | `100` | Task queue depth before thread creation |
 
-# Start application
-docker-compose up task-queue-app
+## API Reference
 
-# View logs
-docker-compose logs -f task-queue-app
+### Authentication
+
+```http
+POST /auth/register
+{"username": "alice", "email": "alice@example.com", "password": "secret"}
+
+POST /auth/login
+{"username": "alice", "password": "secret"}
+# Response: {"token": "<JWT>", "username": "alice", "role": "USER"}
 ```
 
-## 📊 API Endpoints
+All other endpoints require `Authorization: Bearer <JWT>`.
 
 ### Task Management
 
 ```http
-# Submit a new task
+# Submit task
 POST /api/tasks
 {
   "type": "EMAIL_SEND",
-  "payload": {
-    "recipient": "user@example.com",
-    "subject": "Test Email"
-  },
+  "payload": {"recipient": "user@example.com", "subject": "Hello"},
   "priority": "HIGH"
 }
 
-# Get task by ID
+# List tasks (paginated)
+GET /api/tasks?page=0&size=20
+
+# Get single task
 GET /api/tasks/{taskId}
 
-# Get all tasks
-GET /api/tasks
-
-# Get tasks by status
+# Get by status
 GET /api/tasks/status/{status}
+# Status values: PENDING, PROCESSING, COMPLETED, FAILED, RETRYING, PAUSED, CANCELLED
 
-# Get task statistics
+# Cancel task
+POST /api/tasks/{taskId}/cancel
+
+# Retry failed/cancelled task
+POST /api/tasks/{taskId}/retry
+
+# Delete task (ADMIN role required)
+DELETE /api/tasks/{taskId}
+
+# Statistics
 GET /api/tasks/statistics
 
-# Get active workers
+# Active workers
 GET /api/workers
 ```
 
 ### Task Types
 
-1. **EMAIL_SEND**: Email sending tasks
-   ```json
-   {
-     "type": "EMAIL_SEND",
-     "payload": {
-       "recipient": "user@example.com",
-       "subject": "Test Email"
-     }
-   }
-   ```
+| Type | Required Payload Fields | Simulated Duration |
+|---|---|---|
+| `EMAIL_SEND` | `recipient`, `subject` | 2s |
+| `IMAGE_PROCESS` | `imageUrl`, `operation` | 5s |
+| `DATA_EXPORT` | `format`, `recordCount` | 3s |
+| `REPORT_GENERATE` | `reportType`, `dateRange` | 8s |
+| `GENERIC` | any | 1s |
 
-2. **IMAGE_PROCESS**: Image processing tasks
-   ```json
-   {
-     "type": "IMAGE_PROCESS",
-     "payload": {
-       "imageUrl": "https://example.com/image.jpg",
-       "operation": "resize"
-     }
-   }
-   ```
+### WebSocket
 
-3. **DATA_EXPORT**: Data export tasks
-   ```json
-   {
-     "type": "DATA_EXPORT",
-     "payload": {
-       "format": "CSV",
-       "recordCount": 1000
-     }
-   }
-   ```
+```
+Connect:   ws://localhost:8080/ws  (SockJS fallback)
+Subscribe: /topic/task-updates     (receives Task JSON on every state change)
+```
 
-4. **REPORT_GENERATE**: Report generation tasks
-   ```json
-   {
-     "type": "REPORT_GENERATE",
-     "payload": {
-       "reportType": "monthly",
-       "dateRange": "2024-01"
-     }
-   }
-   ```
+## Project Structure
 
-## 📈 Monitoring & Metrics
+```
+src/main/java/com/taskqueue/
+├── Task.java                          # Task entity + TaskStatus enum (PENDING/PROCESSING/COMPLETED/FAILED/RETRYING/PAUSED/CANCELLED)
+├── TaskQueueApplication.java          # @EnableGlobalMethodSecurity, taskExecutor @Bean
+├── config/
+│   ├── JwtAuthenticationFilter.java   # OncePerRequestFilter — validates JWT, sets SecurityContext
+│   ├── SecurityConfig.java            # CORS (env var), JWT filter chain, /auth/** open
+│   └── WebSocketConfig.java           # STOMP /ws endpoint, /topic broker
+├── controller/
+│   ├── TaskController.java            # REST endpoints, @PreAuthorize on DELETE
+│   └── AuthController.java            # /auth/register, /auth/login
+├── service/
+│   ├── TaskService.java               # Business logic, Redis ops, Kafka publish, SCAN-based worker lookup
+│   ├── JwtService.java                # generateToken / validateToken (@Value secret)
+│   ├── UserService.java               # register / findBy*, constructor-injected PasswordEncoder
+│   └── CustomUserDetailsService.java  # Loads UserDetails from H2
+├── worker/
+│   ├── TaskWorker.java                # @KafkaListener (manual ack), idempotency check, @Async dispatch
+│   ├── TaskProcessor.java             # Strategy interface: getType() + process(payload)
+│   └── processors/
+│       ├── EmailTaskProcessor.java
+│       ├── ImageTaskProcessor.java
+│       ├── DataExportTaskProcessor.java
+│       ├── ReportTaskProcessor.java
+│       └── GenericTaskProcessor.java  # Fallback — GENERIC_TYPE constant
+└── model/
+    ├── User.java
+    ├── UserRepository.java
+    ├── Role.java
+    └── LoginResponse.java
+```
 
-### Dashboard Features
+## Key Design Decisions
 
-- **Real-time Task Updates**: WebSocket connection for live updates
-- **Task Statistics**: Success rates, execution times, task counts
-- **Visual Charts**: Pie charts for status distribution, bar charts for task types
-- **Worker Monitoring**: Active worker status and health
-- **Task Details**: Detailed view of individual tasks
+### Strategy Pattern for Processors
+All task processors implement `TaskProcessor`. `TaskWorker` builds a `Map<String, TaskProcessor>` registry at startup from Spring-injected `List<TaskProcessor>`. Adding a new task type requires only a new `@Component` class — zero changes to `TaskWorker`.
 
-### Key Metrics
+### Non-blocking Async Execution
+Kafka consumer thread calls `ack.acknowledge()` immediately, then delegates to `@Async("taskExecutor")`. The `ThreadPoolTaskExecutor` runs up to 20 concurrent tasks. `Thread.sleep()` inside processors never blocks Kafka polling.
 
-- Total tasks processed
-- Success rate percentage
-- Average execution time
-- Active worker count
-- Task status distribution
-- Task type distribution
+### Idempotency
+Before executing, the worker re-fetches the latest task state from Redis. If the status is `COMPLETED` or `CANCELLED`, it skips execution. This prevents double-processing when Kafka redelivers messages after a consumer rebalance.
+
+### CANCELLED vs FAILED
+`CANCELLED` = user-initiated (clean stop). `FAILED` = system error after exhausting retries. Statistics track them separately. The idempotency check skips both statuses, so a cancelled task won't be re-executed if Kafka redelivers the message.
+
+### Exponential Backoff
+`ScheduledExecutorService.schedule(kafkaSend, 2^retryCount, SECONDS)` — the delay is actually enforced before the message is published to `task-retry`. Retry attempts: 2s → 4s → 8s → FAILED.
+
+## Architecture Animation
+
+Open [`system-animation.html`](system-animation.html) in any browser for an interactive SVG walkthrough of all 6 scenarios:
+
+1. **Submit Task** — frontend → JWT filter → controller → service → Redis + Kafka
+2. **Worker Processing** — Kafka consumer, idempotency check, @Async, strategy dispatch, WebSocket push
+3. **Retry on Failure** — exponential backoff, ScheduledExecutorService, task-retry topic
+4. **Auth Flow** — login, BCrypt, JWT generation, localStorage, interceptor
+5. **Cancel Task** — CANCELLED status, idempotency skip, WebSocket notification
+6. **Real-time Update** — STOMP subscription, broker routing, state re-render
 
 ---
 
-**Enjoy your secure, distributed task queue system!**
+Build: `mvn compile` — 23 source files, 0 errors. Tests: `mvn test` — 3/3 pass.

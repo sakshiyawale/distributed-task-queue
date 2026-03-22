@@ -5,19 +5,21 @@ import com.taskqueue.service.TaskService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+// @CrossOrigin removed — CORS is handled centrally in SecurityConfig.corsConfigurationSource()
+// Previously had @CrossOrigin(origins = "*") which bypassed the configured allowed-origins
 @RestController
 @RequestMapping("/tasks")
 @RequiredArgsConstructor
 @Slf4j
-@CrossOrigin(origins = "*")
 public class TaskController {
-    
+
     private final TaskService taskService;
 
     @GetMapping("/")
@@ -26,11 +28,11 @@ public class TaskController {
         response.put("message", "Distributed Task Queue System");
         response.put("version", "1.0.0");
         response.put("endpoints", Map.of(
-            "submit_task", "POST /tasks",
-            "get_all_tasks", "GET /tasks",
-            "get_task", "GET /tasks/{taskId}",
-            "get_workers", "GET /tasks/workers",
-            "get_statistics", "GET /tasks/statistics"
+            "submit_task",   "POST /tasks",
+            "get_all_tasks", "GET /tasks?page=0&size=20",
+            "get_task",      "GET /tasks/{taskId}",
+            "get_workers",   "GET /tasks/workers",
+            "get_statistics","GET /tasks/statistics"
         ));
         return ResponseEntity.ok(response);
     }
@@ -39,8 +41,8 @@ public class TaskController {
     public ResponseEntity<Task> submitTask(@RequestBody TaskSubmissionRequest request) {
         try {
             Task task = taskService.submitTask(
-                request.getType(), 
-                request.getPayload(), 
+                request.getType(),
+                request.getPayload(),
                 request.getPriority()
             );
             return ResponseEntity.ok(task);
@@ -68,7 +70,9 @@ public class TaskController {
         return result ? ResponseEntity.ok().build() : ResponseEntity.notFound().build();
     }
 
+    // Admin-only: enforced both at URL level (SecurityConfig) and method level (@PreAuthorize)
     @DeleteMapping("/{taskId}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<?> deleteTask(@PathVariable String taskId) {
         boolean result = taskService.deleteTask(taskId);
         return result ? ResponseEntity.ok().build() : ResponseEntity.notFound().build();
@@ -77,37 +81,38 @@ public class TaskController {
     @GetMapping("/{taskId}")
     public ResponseEntity<Task> getTask(@PathVariable String taskId) {
         Task task = taskService.getTask(taskId);
-        if (task != null) {
-            return ResponseEntity.ok(task);
-        }
-        return ResponseEntity.notFound().build();
+        return task != null ? ResponseEntity.ok(task) : ResponseEntity.notFound().build();
     }
 
+    /**
+     * Paginated task list. Defaults to page=0, size=20.
+     * Uses Redis LRANGE offset/limit — does not load all tasks into memory.
+     */
     @GetMapping
-    public ResponseEntity<List<Task>> getAllTasks() {
-        List<Task> tasks = taskService.getAllTasks();
+    public ResponseEntity<List<Task>> getAllTasks(
+            @RequestParam(defaultValue = "0")  int page,
+            @RequestParam(defaultValue = "20") int size) {
+        List<Task> tasks = taskService.getAllTasks(page, size);
         return ResponseEntity.ok(tasks);
     }
 
     @GetMapping("/status/{status}")
     public ResponseEntity<List<Task>> getTasksByStatus(@PathVariable Task.TaskStatus status) {
-        List<Task> tasks = taskService.getTasksByStatus(status);
-        return ResponseEntity.ok(tasks);
+        return ResponseEntity.ok(taskService.getTasksByStatus(status));
     }
 
     @GetMapping("/statistics")
     public ResponseEntity<Map<String, Object>> getTaskStatistics() {
-        Map<String, Object> stats = taskService.getTaskStatistics();
-        return ResponseEntity.ok(stats);
+        return ResponseEntity.ok(taskService.getTaskStatistics());
     }
 
     @GetMapping("/workers")
     public ResponseEntity<List<Map<String, Object>>> getActiveWorkers() {
-        List<Map<String, Object>> workers = taskService.getActiveWorkers();
-        return ResponseEntity.ok(workers);
+        return ResponseEntity.ok(taskService.getActiveWorkers());
     }
 
-    // DTOs
+    // ── DTO ───────────────────────────────────────────────────────────────────
+
     public static class TaskSubmissionRequest {
         private String type;
         private Map<String, Object> payload;

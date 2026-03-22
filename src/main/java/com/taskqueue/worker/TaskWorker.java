@@ -4,198 +4,188 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.taskqueue.Task;
 import com.taskqueue.service.TaskService;
-import lombok.RequiredArgsConstructor;
+import com.taskqueue.worker.processors.GenericTaskProcessor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class TaskWorker {
-    
+
     private final TaskService taskService;
     private final ObjectMapper objectMapper;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final SimpMessagingTemplate messagingTemplate;
-    
-    private String workerId;
+
+    // Strategy pattern: keyed by task type, built from all @Component TaskProcessor beans
+    private final Map<String, TaskProcessor> processors;
+
+    // Single-thread scheduler used to enforce exponential backoff delay before re-enqueueing retries
+    private final ScheduledExecutorService retryScheduler = new ScheduledThreadPoolExecutor(1);
+
     private static final String RETRY_TOPIC = "task-retry";
+
+    private String workerId;
+
+    public TaskWorker(TaskService taskService,
+                      ObjectMapper objectMapper,
+                      KafkaTemplate<String, String> kafkaTemplate,
+                      SimpMessagingTemplate messagingTemplate,
+                      List<TaskProcessor> processorList) {
+        this.taskService      = taskService;
+        this.objectMapper     = objectMapper;
+        this.kafkaTemplate    = kafkaTemplate;
+        this.messagingTemplate = messagingTemplate;
+        // Build the strategy registry from all @Component TaskProcessor beans
+        this.processors = processorList.stream()
+                .collect(Collectors.toMap(TaskProcessor::getType, p -> p));
+    }
 
     @PostConstruct
     public void init() {
         this.workerId = "worker-" + UUID.randomUUID().toString().substring(0, 8);
         taskService.registerWorker(workerId, "ACTIVE");
-        log.info("Worker initialized: {}", workerId);
+        log.info("Worker initialized: {} | registered processors: {}", workerId, processors.keySet());
     }
 
+    /**
+     * Kafka consumer threads call this method then immediately return to poll the next message.
+     * Actual task execution is offloaded to the "taskExecutor" thread pool via @Async.
+     * Manual ack is committed after the task is accepted for async execution.
+     */
     @KafkaListener(topics = {"task-queue-low", "task-queue-normal", "task-queue-high", "task-queue-urgent"})
-    public void processTask(String taskJson) {
-        try {
-            Task task = objectMapper.readValue(taskJson, Task.class);
-            executeTask(task);
-        } catch (JsonProcessingException e) {
-            log.error("Failed to deserialize task", e);
-        }
+    public void processTask(String taskJson, Acknowledgment ack) {
+        handleIncoming(taskJson, ack, false);
     }
 
     @KafkaListener(topics = RETRY_TOPIC)
-    public void processRetryTask(String taskJson) {
+    public void processRetryTask(String taskJson, Acknowledgment ack) {
+        handleIncoming(taskJson, ack, true);
+    }
+
+    private void handleIncoming(String taskJson, Acknowledgment ack, boolean isRetry) {
         try {
             Task task = objectMapper.readValue(taskJson, Task.class);
-            log.info("Retrying task: {} (attempt {})", task.getId(), task.getRetryCount() + 1);
-            executeTask(task);
+
+            // Idempotency check: re-fetch latest state from Redis before executing.
+            // Prevents duplicate execution if Kafka redelivers a message (e.g. after rebalance).
+            Task latest = taskService.getTask(task.getId());
+            if (latest != null) {
+                Task.TaskStatus s = latest.getStatus();
+                if (s == Task.TaskStatus.COMPLETED || s == Task.TaskStatus.CANCELLED) {
+                    log.info("Skipping already-{} task: {}", s, task.getId());
+                    ack.acknowledge();
+                    return;
+                }
+                // Use the latest Redis state to pick up any manual pause/cancel
+                task = latest;
+            }
+
+            if (isRetry) {
+                log.info("Retrying task: {} (attempt {})", task.getId(), task.getRetryCount() + 1);
+            }
+
+            // Acknowledge offset now — execution is handed off to async thread pool.
+            // If the app crashes after ack but before completion, the task stays PROCESSING
+            // in Redis and can be recovered by a stuck-task scanner (future improvement).
+            ack.acknowledge();
+            executeTaskAsync(task);
+
         } catch (JsonProcessingException e) {
-            log.error("Failed to deserialize retry task", e);
+            log.error("Failed to deserialize task message", e);
+            ack.acknowledge(); // Don't block the partition on a malformed message
         }
     }
 
-    private void executeTask(Task task) {
+    /**
+     * Runs in the "taskExecutor" thread pool (configured in TaskQueueApplication).
+     * Kafka consumer threads are never blocked by task execution.
+     */
+    @Async("taskExecutor")
+    public void executeTaskAsync(Task task) {
         long startTime = System.currentTimeMillis();
-        
+
         try {
-            // Update task status to processing
             task.setStatus(Task.TaskStatus.PROCESSING);
             task.setWorkerId(workerId);
             task.setStartedAt(LocalDateTime.now());
             taskService.updateTask(task);
-            
-            // Send real-time update
             sendTaskUpdate(task);
-            
-            // Register worker as busy
             taskService.registerWorker(workerId, "BUSY");
-            
-            // Simulate task processing based on task type
-            Object result = processTaskByType(task);
-            
-            // Task completed successfully
+
+            // Strategy pattern: look up processor by task type, fall back to GENERIC
+            TaskProcessor processor = processors.getOrDefault(task.getType(),
+                    processors.get(GenericTaskProcessor.GENERIC_TYPE));
+            String result = processor.process(task.getPayload());
+
             task.setStatus(Task.TaskStatus.COMPLETED);
-            task.setResult(result.toString());
+            task.setResult(result);
             task.setCompletedAt(LocalDateTime.now());
             task.setExecutionTimeMs(System.currentTimeMillis() - startTime);
-            
             taskService.updateTask(task);
             log.info("Task completed: {} in {}ms", task.getId(), task.getExecutionTimeMs());
-            
+
         } catch (Exception e) {
             log.error("Task failed: {}", task.getId(), e);
             handleTaskFailure(task, e, startTime);
         } finally {
-            // Register worker as available
             taskService.registerWorker(workerId, "ACTIVE");
             sendTaskUpdate(task);
         }
     }
 
-    private Object processTaskByType(Task task) throws Exception {
-        Map<String, Object> payload = task.getPayload();
-        
-        switch (task.getType()) {
-            case "EMAIL_SEND":
-                return processEmailTask(payload);
-            case "IMAGE_PROCESS":
-                return processImageTask(payload);
-            case "DATA_EXPORT":
-                return processDataExportTask(payload);
-            case "REPORT_GENERATE":
-                return processReportTask(payload);
-            default:
-                return processGenericTask(payload);
-        }
-    }
-
-    private Object processEmailTask(Map<String, Object> payload) throws InterruptedException {
-        // Simulate email sending
-        String recipient = (String) payload.get("recipient");
-        String subject = (String) payload.get("subject");
-        
-        Thread.sleep(2000); // Simulate email sending delay
-        
-        return "Email sent to " + recipient + " with subject: " + subject;
-    }
-
-    private Object processImageTask(Map<String, Object> payload) throws InterruptedException {
-        // Simulate image processing
-        String imageUrl = (String) payload.get("imageUrl");
-        String operation = (String) payload.get("operation");
-        
-        Thread.sleep(5000); // Simulate image processing delay
-        
-        return "Image processed: " + imageUrl + " with operation: " + operation;
-    }
-
-    private Object processDataExportTask(Map<String, Object> payload) throws InterruptedException {
-        // Simulate data export
-        String format = (String) payload.get("format");
-        Integer recordCount = (Integer) payload.get("recordCount");
-        
-        Thread.sleep(3000); // Simulate data export delay
-        
-        return "Exported " + recordCount + " records in " + format + " format";
-    }
-
-    private Object processReportTask(Map<String, Object> payload) throws InterruptedException {
-        // Simulate report generation
-        String reportType = (String) payload.get("reportType");
-        String dateRange = (String) payload.get("dateRange");
-        
-        Thread.sleep(8000); // Simulate report generation delay
-        
-        return "Generated " + reportType + " report for " + dateRange;
-    }
-
-    private Object processGenericTask(Map<String, Object> payload) throws InterruptedException {
-        // Simulate generic task processing
-        Thread.sleep(1000);
-        return "Generic task processed with payload: " + payload.toString();
-    }
-
     private void handleTaskFailure(Task task, Exception e, long startTime) {
         task.setError(e.getMessage());
         task.setExecutionTimeMs(System.currentTimeMillis() - startTime);
-        
+
         if (task.getRetryCount() < task.getMaxRetries()) {
-            // Retry the task
             task.setRetryCount(task.getRetryCount() + 1);
             task.setStatus(Task.TaskStatus.RETRYING);
             taskService.updateTask(task);
-            
-            // Send to retry topic with exponential backoff
-            try {
-                String taskJson = objectMapper.writeValueAsString(task);
-                long delay = (long) Math.pow(2, task.getRetryCount()) * 1000; // Exponential backoff
-                
-                // In a real implementation, you'd use a delay queue or scheduled task
-                // For demo purposes, we'll just send to retry topic immediately
-                kafkaTemplate.send(RETRY_TOPIC, task.getId(), taskJson);
-                
-                log.info("Task scheduled for retry: {} (attempt {})", task.getId(), task.getRetryCount());
-            } catch (JsonProcessingException ex) {
-                log.error("Failed to schedule task retry: {}", task.getId(), ex);
-            }
+
+            // Enforce exponential backoff delay before re-enqueueing.
+            // Previously the delay was calculated but the send was immediate.
+            long delaySeconds = (long) Math.pow(2, task.getRetryCount()); // 2, 4, 8 seconds
+            log.info("Task {} scheduled for retry in {}s (attempt {})",
+                    task.getId(), delaySeconds, task.getRetryCount());
+
+            final Task taskToRetry = task;
+            retryScheduler.schedule(() -> {
+                try {
+                    String taskJson = objectMapper.writeValueAsString(taskToRetry);
+                    kafkaTemplate.send(RETRY_TOPIC, taskToRetry.getId(), taskJson);
+                } catch (JsonProcessingException ex) {
+                    log.error("Failed to enqueue retry for task: {}", taskToRetry.getId(), ex);
+                }
+            }, delaySeconds, TimeUnit.SECONDS);
+
         } else {
-            // Max retries reached, mark as failed
             task.setStatus(Task.TaskStatus.FAILED);
             taskService.updateTask(task);
-            log.error("Task failed permanently: {}", task.getId());
+            log.error("Task failed permanently after {} attempts: {}", task.getMaxRetries(), task.getId());
         }
     }
 
     private void sendTaskUpdate(Task task) {
         try {
-            // Send real-time update to WebSocket subscribers
             messagingTemplate.convertAndSend("/topic/task-updates", task);
         } catch (Exception e) {
-            log.error("Failed to send task update", e);
+            log.error("Failed to send WebSocket task update for: {}", task.getId(), e);
         }
     }
 }

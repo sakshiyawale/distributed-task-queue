@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Distributed Task Queue System — Architecture Animation</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 18px 32px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  header h1 { font-size: 1.1rem; font-weight: 600; color: #58a6ff; }
+  header span { font-size: 0.8rem; color: #8b949e; }
+
+  .scenario-bar {
+    display: flex;
+    gap: 10px;
+    padding: 14px 32px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .scenario-bar label { font-size: 0.78rem; color: #8b949e; margin-right: 4px; }
+
+  .btn {
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid #30363d;
+    background: #21262d;
+    color: #e6edf3;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+  .btn:hover { background: #30363d; border-color: #58a6ff; }
+  .btn.active { background: #1f6feb; border-color: #388bfd; color: #fff; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .speed-control { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .speed-control label { font-size: 0.75rem; color: #8b949e; }
+  input[type=range] { width: 80px; accent-color: #58a6ff; }
+
+  .main {
+    display: flex;
+    flex: 1;
+    gap: 0;
+  }
+
+  .canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  svg#arch {
+    width: 100%;
+    height: 100%;
+    min-height: 520px;
+  }
+
+  /* ── Component boxes ── */
+  .comp-box {
+    rx: 10; ry: 10;
+    stroke-width: 1.5;
+  }
+
+  /* ── Step panel ── */
+  .step-panel {
+    width: 300px;
+    background: #161b22;
+    border-left: 1px solid #30363d;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .step-panel h2 {
+    padding: 14px 18px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid #30363d;
+  }
+  .steps-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .step-item {
+    display: flex;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    border: 1px solid transparent;
+    transition: all 0.3s;
+    opacity: 0.35;
+  }
+  .step-item.active {
+    background: #1c2128;
+    border-color: #30363d;
+    opacity: 1;
+  }
+  .step-item.done {
+    opacity: 0.55;
+  }
+  .step-item.highlight {
+    background: #1f2a3a;
+    border-color: #388bfd;
+    opacity: 1;
+  }
+  .step-num {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.68rem; font-weight: 700;
+    flex-shrink: 0;
+    background: #21262d;
+    color: #8b949e;
+    border: 1px solid #30363d;
+  }
+  .step-item.highlight .step-num { background: #1f6feb; color: #fff; border-color: #388bfd; }
+  .step-item.done .step-num { background: #196c2e; color: #3fb950; border-color: #238636; }
+
+  .step-text strong { color: #f0f6fc; display: block; margin-bottom: 2px; }
+  .step-text span { color: #8b949e; font-size: 0.73rem; }
+
+  /* progress bar */
+  .progress-wrap {
+    padding: 12px 18px;
+    border-top: 1px solid #30363d;
+  }
+  .progress-bar-bg {
+    height: 4px; background: #21262d; border-radius: 2px; overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%; background: #1f6feb; border-radius: 2px;
+    transition: width 0.4s;
+    width: 0%;
+  }
+  .progress-label {
+    font-size: 0.72rem; color: #8b949e; margin-top: 6px;
+    display: flex; justify-content: space-between;
+  }
+
+  /* ── SVG styles (inline via JS) ── */
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8L2 7h20z"/></svg>
+  <h1>Distributed Task Queue System</h1>
+  <span>Interactive Architecture Animation</span>
+</header>
+
+<div class="scenario-bar">
+  <label>Scenario:</label>
+  <button class="btn active" id="btn-submit" onclick="runScenario('submit')">Submit Task</button>
+  <button class="btn" id="btn-process" onclick="runScenario('process')">Worker Processing</button>
+  <button class="btn" id="btn-retry" onclick="runScenario('retry')">Retry on Failure</button>
+  <button class="btn" id="btn-auth" onclick="runScenario('auth')">Auth Flow</button>
+  <button class="btn" id="btn-realtime" onclick="runScenario('realtime')">Real-time Update</button>
+  <button class="btn" id="btn-cancel" onclick="runScenario('cancel')">Cancel Task</button>
+  <button class="btn" id="btn-replay" onclick="replayScenario()" title="Replay current scenario" style="margin-left:8px;border-color:#3fb950;color:#3fb950;">↺ Replay</button>
+  <button class="btn" id="btn-stop" onclick="stopScenario()" title="Stop animation" style="border-color:#f85149;color:#f85149;">⏹ Stop</button>
+  <div class="speed-control">
+    <label>Speed:</label>
+    <input type="range" id="speedSlider" min="0.5" max="3" step="0.5" value="1" />
+    <span id="speedLabel" style="font-size:0.75rem;color:#8b949e;width:28px">1x</span>
+  </div>
+</div>
+
+<div class="main">
+  <div class="canvas-wrap">
+    <svg id="arch" viewBox="0 0 900 540" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#444d56"/>
+        </marker>
+        <marker id="arrow-blue" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#58a6ff"/>
+        </marker>
+        <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#3fb950"/>
+        </marker>
+        <marker id="arrow-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#d29922"/>
+        </marker>
+        <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#f85149"/>
+        </marker>
+        <marker id="arrow-purple" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#a371f7"/>
+        </marker>
+        <filter id="glow-blue">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+          <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="glow-green">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+          <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <!-- ═══════════════ BACKGROUND LAYERS ═══════════════ -->
+      <!-- Frontend zone -->
+      <rect x="18" y="18" width="175" height="510" rx="12" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+      <text x="105" y="38" text-anchor="middle" font-size="10" fill="#484f58" font-family="monospace">FRONTEND</text>
+
+      <!-- Backend zone -->
+      <rect x="210" y="18" width="310" height="510" rx="12" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+      <text x="365" y="38" text-anchor="middle" font-size="10" fill="#484f58" font-family="monospace">SPRING BOOT BACKEND :8080</text>
+
+      <!-- Infrastructure zone -->
+      <rect x="538" y="18" width="348" height="510" rx="12" fill="#161b22" stroke="#21262d" stroke-width="1"/>
+      <text x="712" y="38" text-anchor="middle" font-size="10" fill="#484f58" font-family="monospace">INFRASTRUCTURE</text>
+
+      <!-- ═══════════════ STATIC WIRES ═══════════════ -->
+      <!-- Frontend → JWT Filter -->
+      <line x1="193" y1="120" x2="228" y2="120" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- JWT Filter → TaskController -->
+      <line x1="282" y1="145" x2="282" y2="185" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- TaskController → TaskService -->
+      <line x1="350" y1="210" x2="400" y2="210" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- TaskService → Redis -->
+      <line x1="513" y1="180" x2="556" y2="155" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- TaskService → Kafka -->
+      <line x1="513" y1="220" x2="556" y2="295" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- Kafka → TaskWorker -->
+      <line x1="712" y1="365" x2="712" y2="410" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- TaskWorker → Redis (update) -->
+      <line x1="640" y1="435" x2="590" y2="175" stroke="#2d333b" stroke-width="1" stroke-dasharray="3,4" marker-end="url(#arrow)"/>
+      <!-- WebSocket ↔ Frontend -->
+      <line x1="193" y1="300" x2="282" y2="300" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3"/>
+      <!-- TaskWorker → WebSocket -->
+      <line x1="640" y1="440" x2="340" y2="300" stroke="#2d333b" stroke-width="1" stroke-dasharray="3,4" marker-end="url(#arrow)"/>
+      <!-- AuthController → H2 -->
+      <line x1="350" y1="390" x2="556" y2="455" stroke="#2d333b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- ═══════════════ COMPONENTS ═══════════════ -->
+
+      <!-- React Frontend -->
+      <rect id="comp-frontend" x="28" y="60" width="155" height="100" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="105" y="82" text-anchor="middle" font-size="11" fill="#58a6ff" font-weight="bold" font-family="monospace">⚛ React App</text>
+      <text x="105" y="98" text-anchor="middle" font-size="9" fill="#6e7681">localhost:3000</text>
+      <line x1="38" y1="106" x2="173" y2="106" stroke="#21262d" stroke-width="1"/>
+      <text x="105" y="119" text-anchor="middle" font-size="8.5" fill="#8b949e">TaskForm</text>
+      <text x="105" y="131" text-anchor="middle" font-size="8.5" fill="#8b949e">TaskList</text>
+      <text x="105" y="143" text-anchor="middle" font-size="8.5" fill="#8b949e">Dashboard</text>
+
+      <!-- Auth Forms -->
+      <rect id="comp-auth-ui" x="28" y="175" width="155" height="55" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="105" y="196" text-anchor="middle" font-size="10.5" fill="#a371f7" font-weight="bold" font-family="monospace">🔐 Auth UI</text>
+      <text x="105" y="212" text-anchor="middle" font-size="8.5" fill="#8b949e">Login / Register</text>
+      <text x="105" y="224" text-anchor="middle" font-size="8.5" fill="#8b949e">localStorage JWT</text>
+
+      <!-- WebSocket Client -->
+      <rect id="comp-ws-client" x="28" y="245" width="155" height="55" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="105" y="265" text-anchor="middle" font-size="10.5" fill="#f0883e" font-weight="bold" font-family="monospace">⚡ WebSocket</text>
+      <text x="105" y="281" text-anchor="middle" font-size="8.5" fill="#8b949e">SockJS / STOMP</text>
+      <text x="105" y="293" text-anchor="middle" font-size="8.5" fill="#8b949e">/topic/task-updates</text>
+
+      <!-- Axios -->
+      <rect id="comp-axios" x="28" y="315" width="155" height="42" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="105" y="333" text-anchor="middle" font-size="10" fill="#79c0ff" font-weight="bold" font-family="monospace">📡 Axios</text>
+      <text x="105" y="347" text-anchor="middle" font-size="8.5" fill="#8b949e">JWT Interceptor</text>
+
+      <!-- ── JWT Filter ── -->
+      <rect id="comp-jwt-filter" x="222" y="95" width="120" height="60" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="282" y="115" text-anchor="middle" font-size="10.5" fill="#a371f7" font-weight="bold" font-family="monospace">🛡 JWT Filter</text>
+      <text x="282" y="131" text-anchor="middle" font-size="8" fill="#8b949e">OncePerRequest</text>
+      <text x="282" y="143" text-anchor="middle" font-size="8" fill="#8b949e">SecurityContext</text>
+
+      <!-- ── Task Controller ── -->
+      <rect id="comp-controller" x="222" y="180" width="120" height="65" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="282" y="200" text-anchor="middle" font-size="10.5" fill="#3fb950" font-weight="bold" font-family="monospace">🎮 Controller</text>
+      <text x="282" y="215" text-anchor="middle" font-size="8" fill="#8b949e">POST /tasks</text>
+      <text x="282" y="227" text-anchor="middle" font-size="8" fill="#8b949e">GET /tasks/{id}</text>
+      <text x="282" y="239" text-anchor="middle" font-size="8" fill="#8b949e">cancel/pause/retry</text>
+
+      <!-- ── WebSocket Config ── -->
+      <rect id="comp-ws-server" x="222" y="270" width="120" height="55" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="282" y="290" text-anchor="middle" font-size="10.5" fill="#f0883e" font-weight="bold" font-family="monospace">⚡ WS Broker</text>
+      <text x="282" y="306" text-anchor="middle" font-size="8" fill="#8b949e">STOMP /ws</text>
+      <text x="282" y="318" text-anchor="middle" font-size="8" fill="#8b949e">/topic/task-updates</text>
+
+      <!-- ── Auth Controller ── -->
+      <rect id="comp-auth-ctrl" x="222" y="355" width="120" height="55" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="282" y="373" text-anchor="middle" font-size="10.5" fill="#a371f7" font-weight="bold" font-family="monospace">🔑 Auth API</text>
+      <text x="282" y="389" text-anchor="middle" font-size="8" fill="#8b949e">/auth/login</text>
+      <text x="282" y="401" text-anchor="middle" font-size="8" fill="#8b949e">/auth/register</text>
+
+      <!-- ── Task Service ── -->
+      <rect id="comp-taskservice" x="372" y="165" width="128" height="90" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="436" y="185" text-anchor="middle" font-size="10.5" fill="#58a6ff" font-weight="bold" font-family="monospace">⚙ TaskService</text>
+      <text x="436" y="200" text-anchor="middle" font-size="8" fill="#8b949e">submitTask()</text>
+      <text x="436" y="212" text-anchor="middle" font-size="8" fill="#8b949e">updateTask()</text>
+      <text x="436" y="224" text-anchor="middle" font-size="8" fill="#8b949e">getTaskStatistics()</text>
+      <text x="436" y="236" text-anchor="middle" font-size="8" fill="#8b949e">registerWorker()</text>
+      <text x="436" y="248" text-anchor="middle" font-size="8" fill="#8b949e">cancelTask() / retryTask()</text>
+
+      <!-- ── JWT Service ── -->
+      <rect id="comp-jwtservice" x="372" y="340" width="128" height="60" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="436" y="360" text-anchor="middle" font-size="10.5" fill="#a371f7" font-weight="bold" font-family="monospace">🔏 JwtService</text>
+      <text x="436" y="376" text-anchor="middle" font-size="8" fill="#8b949e">generateToken()</text>
+      <text x="436" y="388" text-anchor="middle" font-size="8" fill="#8b949e">validateToken()</text>
+
+      <!-- ── REDIS ── -->
+      <rect id="comp-redis" x="556" y="60" width="160" height="115" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="636" y="80" text-anchor="middle" font-size="11" fill="#f85149" font-weight="bold" font-family="monospace">🗄 Redis</text>
+      <text x="636" y="95" text-anchor="middle" font-size="8.5" fill="#8b949e">localhost:6379</text>
+      <line x1="566" y1="103" x2="706" y2="103" stroke="#21262d" stroke-width="1"/>
+      <text x="636" y="118" text-anchor="middle" font-size="8.5" fill="#e6edf3">task:{UUID} → JSON</text>
+      <text x="636" y="131" text-anchor="middle" font-size="8.5" fill="#8b949e">TTL: 24 hours</text>
+      <text x="636" y="144" text-anchor="middle" font-size="8.5" fill="#e6edf3">tasks:all → [ids]</text>
+      <text x="636" y="157" text-anchor="middle" font-size="8.5" fill="#8b949e">worker:{id} TTL: 5min</text>
+      <text x="636" y="170" text-anchor="middle" font-size="8" fill="#8b949e">Key-Value + List</text>
+
+      <!-- ── KAFKA ── -->
+      <rect id="comp-kafka" x="556" y="200" width="330" height="165" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="721" y="220" text-anchor="middle" font-size="11" fill="#d29922" font-weight="bold" font-family="monospace">📨 Apache Kafka</text>
+      <text x="721" y="234" text-anchor="middle" font-size="8.5" fill="#8b949e">localhost:9092 | consumer-group: task-queue-workers</text>
+      <line x1="566" y1="241" x2="876" y2="241" stroke="#21262d" stroke-width="1"/>
+
+      <!-- Priority topics -->
+      <rect id="topic-urgent" x="566" y="248" width="68" height="28" rx="5" fill="#2d1b1b" stroke="#f85149" stroke-width="1"/>
+      <text x="600" y="262" text-anchor="middle" font-size="8" fill="#f85149" font-weight="bold">URGENT</text>
+      <text x="600" y="272" text-anchor="middle" font-size="7.5" fill="#8b949e">priority 4</text>
+
+      <rect id="topic-high" x="643" y="248" width="68" height="28" rx="5" fill="#2d2418" stroke="#d29922" stroke-width="1"/>
+      <text x="677" y="262" text-anchor="middle" font-size="8" fill="#d29922" font-weight="bold">HIGH</text>
+      <text x="677" y="272" text-anchor="middle" font-size="7.5" fill="#8b949e">priority 3</text>
+
+      <rect id="topic-normal" x="720" y="248" width="68" height="28" rx="5" fill="#1b2d1b" stroke="#3fb950" stroke-width="1"/>
+      <text x="754" y="262" text-anchor="middle" font-size="8" fill="#3fb950" font-weight="bold">NORMAL</text>
+      <text x="754" y="272" text-anchor="middle" font-size="7.5" fill="#8b949e">priority 2</text>
+
+      <rect id="topic-low" x="797" y="248" width="68" height="28" rx="5" fill="#1a1f2d" stroke="#58a6ff" stroke-width="1"/>
+      <text x="831" y="262" text-anchor="middle" font-size="8" fill="#58a6ff" font-weight="bold">LOW</text>
+      <text x="831" y="272" text-anchor="middle" font-size="7.5" fill="#8b949e">priority 1</text>
+
+      <!-- Retry topic -->
+      <rect id="topic-retry" x="566" y="284" width="298" height="28" rx="5" fill="#2d1f2d" stroke="#a371f7" stroke-width="1"/>
+      <text x="715" y="298" text-anchor="middle" font-size="8" fill="#a371f7" font-weight="bold">task-retry</text>
+      <text x="715" y="308" text-anchor="middle" font-size="7.5" fill="#8b949e">exponential backoff: 2^retryCount seconds</text>
+
+      <!-- Kafka offset label -->
+      <text x="721" y="340" text-anchor="middle" font-size="7.5" fill="#484f58">auto-offset-reset: earliest | group-id: task-queue-workers</text>
+      <text x="721" y="353" text-anchor="middle" font-size="7.5" fill="#484f58">Zookeeper :2181 | @KafkaListener on 5 topics</text>
+
+      <!-- ── TASK WORKER ── -->
+      <rect id="comp-worker" x="556" y="410" width="330" height="105" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="721" y="430" text-anchor="middle" font-size="11" fill="#3fb950" font-weight="bold" font-family="monospace">⚡ TaskWorker</text>
+      <text x="721" y="444" text-anchor="middle" font-size="8.5" fill="#8b949e">worker-{UUID} | @PostConstruct registers in Redis</text>
+      <line x1="566" y1="450" x2="876" y2="450" stroke="#21262d" stroke-width="1"/>
+      <text x="617" y="464" text-anchor="middle" font-size="8" fill="#8b949e">EMAIL_SEND</text>
+      <text x="617" y="476" text-anchor="middle" font-size="7.5" fill="#484f58">2s delay</text>
+      <text x="683" y="464" text-anchor="middle" font-size="8" fill="#8b949e">IMAGE_PROCESS</text>
+      <text x="683" y="476" text-anchor="middle" font-size="7.5" fill="#484f58">5s delay</text>
+      <text x="754" y="464" text-anchor="middle" font-size="8" fill="#8b949e">DATA_EXPORT</text>
+      <text x="754" y="476" text-anchor="middle" font-size="7.5" fill="#484f58">3s delay</text>
+      <text x="826" y="464" text-anchor="middle" font-size="8" fill="#8b949e">REPORT_GEN</text>
+      <text x="826" y="476" text-anchor="middle" font-size="7.5" fill="#484f58">8s delay</text>
+      <text x="721" y="498" text-anchor="middle" font-size="8" fill="#8b949e">handleTaskFailure() → retryCount++ → RETRYING → FAILED after 3 attempts</text>
+      <text x="721" y="510" text-anchor="middle" font-size="8" fill="#8b949e">sendTaskUpdate() → SimpMessagingTemplate → /topic/task-updates</text>
+
+      <!-- ── H2 DB ── -->
+      <rect id="comp-h2" x="726" y="60" width="155" height="80" rx="8" fill="#1c2128" stroke="#30363d" stroke-width="1.5"/>
+      <text x="803" y="80" text-anchor="middle" font-size="10.5" fill="#8b949e" font-weight="bold" font-family="monospace">🗃 H2 Database</text>
+      <text x="803" y="95" text-anchor="middle" font-size="8.5" fill="#8b949e">In-memory (users table)</text>
+      <line x1="736" y1="103" x2="871" y2="103" stroke="#21262d" stroke-width="1"/>
+      <text x="803" y="117" text-anchor="middle" font-size="8.5" fill="#e6edf3">id, username</text>
+      <text x="803" y="129" text-anchor="middle" font-size="8.5" fill="#e6edf3">email, password (BCrypt)</text>
+      <text x="803" y="141" text-anchor="middle" font-size="8" fill="#8b949e">role: USER | ADMIN</text>
+
+      <!-- ── Animated packet layer (drawn by JS) ── -->
+      <g id="packets"></g>
+    </svg>
+  </div>
+
+  <div class="step-panel">
+    <h2>Step-by-Step Flow</h2>
+    <div class="steps-list" id="stepsList"></div>
+    <div class="progress-wrap">
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
+      <div class="progress-label">
+        <span id="progressText">Select a scenario to begin</span>
+        <span id="progressPct"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Speed ────────────────────────────────────────────────────────────���──────
+let speedMult = 1;
+document.getElementById('speedSlider').addEventListener('input', e => {
+  speedMult = parseFloat(e.target.value);
+  document.getElementById('speedLabel').textContent = speedMult + 'x';
+});
+
+// ─── Scenarios ───────────────────────────────────────────────────────────────
+const scenarios = {
+  submit: {
+    label: 'Task Submission',
+    steps: [
+      {
+        title: 'User fills TaskForm',
+        detail: 'Type: EMAIL_SEND, Priority: HIGH, payload: {recipient, subject}',
+        color: '#58a6ff',
+        packets: [
+          { from: [105,110], to: [105,330], color: '#58a6ff', label: 'user input' }
+        ]
+      },
+      {
+        title: 'Axios → POST /tasks',
+        detail: 'Adds "Authorization: Bearer {jwt}" header from localStorage',
+        color: '#79c0ff',
+        packets: [
+          { from: [183,330], to: [228,120], color: '#79c0ff', label: 'POST /tasks + JWT' }
+        ]
+      },
+      {
+        title: 'JwtAuthenticationFilter',
+        detail: 'Extracts JWT from header, validates signature & expiry, sets SecurityContext',
+        color: '#a371f7',
+        packets: [
+          { from: [282,155], to: [282,180], color: '#a371f7', label: 'Auth OK' }
+        ]
+      },
+      {
+        title: 'TaskController.submitTask()',
+        detail: 'Receives TaskSubmissionRequest, calls TaskService.submitTask()',
+        color: '#3fb950',
+        packets: [
+          { from: [342,210], to: [372,210], color: '#3fb950', label: 'type, payload, priority' }
+        ]
+      },
+      {
+        title: 'TaskService creates Task',
+        detail: 'UUID assigned, status=PENDING, createdAt=now, maxRetries=3',
+        color: '#58a6ff',
+        packets: []
+      },
+      {
+        title: 'Store in Redis',
+        detail: 'SET task:{UUID} → JSON (TTL 24h)\nLPUSH tasks:all {UUID}',
+        color: '#f85149',
+        packets: [
+          { from: [500,190], to: [556,130], color: '#f85149', label: 'SET + LPUSH' }
+        ]
+      },
+      {
+        title: 'Publish to Kafka: task-queue-high',
+        detail: 'kafkaTemplate.send("task-queue-high", taskId, taskJson)',
+        color: '#d29922',
+        packets: [
+          { from: [500,220], to: [643,260], color: '#d29922', label: 'task-queue-high' }
+        ]
+      },
+      {
+        title: 'Response 200 OK',
+        detail: 'Returns full Task object with id, status=PENDING, timestamps',
+        color: '#3fb950',
+        packets: [
+          { from: [282,180], to: [183,330], color: '#3fb950', label: '200 OK + Task JSON' }
+        ]
+      },
+      {
+        title: 'Frontend updates TaskList',
+        detail: 'New task appears in UI with PENDING badge. Task ID stored for polling.',
+        color: '#58a6ff',
+        packets: [
+          { from: [105,330], to: [105,110], color: '#58a6ff', label: 'render PENDING task' }
+        ]
+      }
+    ]
+  },
+
+  process: {
+    label: 'Worker Processing',
+    steps: [
+      {
+        title: '@KafkaListener polls topic',
+        detail: 'Consumes from task-queue-high. Re-fetches task from Redis (idempotency check) — skips if already COMPLETED or CANCELLED. ack.acknowledge() called immediately; execution handed off to @Async("taskExecutor") thread pool so Kafka consumer thread is never blocked.',
+        color: '#d29922',
+        packets: [
+          { from: [643,276], to: [680,410], color: '#d29922', label: 'consume + ack' }
+        ]
+      },
+      {
+        title: 'task.status → PROCESSING',
+        detail: 'task.setWorkerId(workerId)\ntask.setStartedAt(LocalDateTime.now())',
+        color: '#58a6ff',
+        packets: []
+      },
+      {
+        title: 'Update Redis: PROCESSING',
+        detail: 'taskService.updateTask(task)\nSET task:{UUID} → updated JSON',
+        color: '#f85149',
+        packets: [
+          { from: [640,435], to: [590,175], color: '#f85149', label: 'SET task:UUID' }
+        ]
+      },
+      {
+        title: 'Register worker as BUSY',
+        detail: 'taskService.registerWorker(workerId, "BUSY")\nSET worker:{id} TTL:5min',
+        color: '#f85149',
+        packets: [
+          { from: [640,435], to: [600,160], color: '#f85149', label: 'worker=BUSY' }
+        ]
+      },
+      {
+        title: 'WebSocket push → PROCESSING',
+        detail: 'messagingTemplate.convertAndSend("/topic/task-updates", task)',
+        color: '#f0883e',
+        packets: [
+          { from: [640,440], to: [340,297], color: '#f0883e', label: 'WS update' },
+          { from: [282,270], to: [105,265], color: '#f0883e', label: 'PROCESSING' }
+        ]
+      },
+      {
+        title: 'Strategy Pattern: processor lookup',
+        detail: 'processors.getOrDefault(task.getType(), GENERIC)\nRegistry built at startup from all @Component TaskProcessor beans\nEmailTaskProcessor / ImageTaskProcessor / DataExportTaskProcessor / ReportTaskProcessor',
+        color: '#3fb950',
+        packets: []
+      },
+      {
+        title: 'task.status → COMPLETED',
+        detail: 'result = "Email sent to recipient"\nexecutionTimeMs = System.currentTimeMillis() - start',
+        color: '#3fb950',
+        packets: []
+      },
+      {
+        title: 'Update Redis: COMPLETED',
+        detail: 'taskService.updateTask(task)\nStores result + completedAt + executionTimeMs',
+        color: '#f85149',
+        packets: [
+          { from: [640,435], to: [590,140], color: '#3fb950', label: 'SET COMPLETED' }
+        ]
+      },
+      {
+        title: 'Register worker as ACTIVE',
+        detail: 'Worker is available for next task\ntaskService.registerWorker(workerId, "ACTIVE")',
+        color: '#3fb950',
+        packets: []
+      },
+      {
+        title: 'WebSocket push → COMPLETED',
+        detail: 'sendTaskUpdate(task) broadcasts final state to all clients',
+        color: '#f0883e',
+        packets: [
+          { from: [640,440], to: [340,297], color: '#3fb950', label: 'WS update' },
+          { from: [282,270], to: [105,265], color: '#3fb950', label: 'COMPLETED ✓' }
+        ]
+      }
+    ]
+  },
+
+  retry: {
+    label: 'Retry on Failure',
+    steps: [
+      {
+        title: 'Task execution throws Exception',
+        detail: 'processTaskByType() throws RuntimeException\nCaught in executeTask() catch block',
+        color: '#f85149',
+        packets: []
+      },
+      {
+        title: 'handleTaskFailure() called',
+        detail: 'task.setError(e.getMessage())\nCheck: retryCount(0) < maxRetries(3)',
+        color: '#f85149',
+        packets: []
+      },
+      {
+        title: 'task.retryCount++ → 1',
+        detail: 'task.setStatus(RETRYING)\ntaskService.updateTask(task)',
+        color: '#a371f7',
+        packets: [
+          { from: [640,435], to: [590,140], color: '#a371f7', label: 'SET RETRYING' }
+        ]
+      },
+      {
+        title: 'Exponential backoff enforced',
+        detail: 'delaySeconds = 2^retryCount (2s, 4s, 8s)\nScheduledExecutorService.schedule(kafkaSend, delay, SECONDS)\nDelay is actually enforced before re-enqueuing to task-retry',
+        color: '#a371f7',
+        packets: []
+      },
+      {
+        title: 'Publish to task-retry topic',
+        detail: 'kafkaTemplate.send("task-retry", taskId, taskJson)',
+        color: '#a371f7',
+        packets: [
+          { from: [640,440], to: [715,284], color: '#a371f7', label: 'task-retry' }
+        ]
+      },
+      {
+        title: 'Worker re-consumes from task-retry',
+        detail: '@KafkaListener(topics = "task-retry")\nprocessRetryTask() → executeTask()',
+        color: '#a371f7',
+        packets: [
+          { from: [715,312], to: [721,410], color: '#a371f7', label: 'retry attempt 2' }
+        ]
+      },
+      {
+        title: 'Attempt 2 also fails → retryCount=2',
+        detail: 'delay = 2^2 = 4 seconds\nPublishes to task-retry again',
+        color: '#d29922',
+        packets: [
+          { from: [640,440], to: [715,284], color: '#d29922', label: 'retry again' }
+        ]
+      },
+      {
+        title: 'Attempt 3 fails → maxRetries reached',
+        detail: 'retryCount(3) >= maxRetries(3)\nNo more retries',
+        color: '#f85149',
+        packets: []
+      },
+      {
+        title: 'task.status → FAILED permanently',
+        detail: 'task.setStatus(FAILED)\ntaskService.updateTask(task)',
+        color: '#f85149',
+        packets: [
+          { from: [640,435], to: [590,140], color: '#f85149', label: 'SET FAILED' }
+        ]
+      },
+      {
+        title: 'WebSocket push → FAILED',
+        detail: 'All clients notified. User can hit "Retry" button to reset retryCount=0',
+        color: '#f0883e',
+        packets: [
+          { from: [640,440], to: [340,297], color: '#f85149', label: 'FAILED' },
+          { from: [282,270], to: [105,265], color: '#f85149', label: 'show FAILED badge' }
+        ]
+      }
+    ]
+  },
+
+  auth: {
+    label: 'Authentication Flow',
+    steps: [
+      {
+        title: 'User submits Login form',
+        detail: 'Username + password entered in Login.tsx\nauthService.login() called',
+        color: '#a371f7',
+        packets: [
+          { from: [105,200], to: [105,330], color: '#a371f7', label: 'login click' }
+        ]
+      },
+      {
+        title: 'Axios → POST /auth/login',
+        detail: 'No JWT needed — /auth/** is permitted in SecurityConfig\nBody: {username, password}',
+        color: '#79c0ff',
+        packets: [
+          { from: [183,330], to: [228,125], color: '#79c0ff', label: 'POST /auth/login' }
+        ]
+      },
+      {
+        title: 'JwtFilter skips /auth/**',
+        detail: 'authHeader is null → filterChain.doFilter() called\nRequest passes through unauthenticated',
+        color: '#a371f7',
+        packets: [
+          { from: [282,155], to: [282,355], color: '#a371f7', label: 'skip filter' }
+        ]
+      },
+      {
+        title: 'AuthController.login()',
+        detail: 'userService.findByUsername(username)\nuserService.checkPassword(raw, encoded)',
+        color: '#a371f7',
+        packets: [
+          { from: [342,380], to: [372,370], color: '#a371f7', label: 'validate credentials' }
+        ]
+      },
+      {
+        title: 'BCrypt password check',
+        detail: 'passwordEncoder.matches(raw, bcryptHash)\nBCrypt is intentionally slow — brute-force resistant',
+        color: '#a371f7',
+        packets: [
+          { from: [372,380], to: [556,455], color: '#a371f7', label: 'SELECT user' }
+        ]
+      },
+      {
+        title: 'H2 DB query',
+        detail: 'userRepository.findByUsername()\nReturns User entity with BCrypt password',
+        color: '#8b949e',
+        packets: [
+          { from: [726,100], to: [500,370], color: '#8b949e', label: 'User row' }
+        ]
+      },
+      {
+        title: 'JwtService.generateToken()',
+        detail: 'Claims: {sub: username, role: USER}\nExpiry: 24 hours\nSigned with HS256 + SECRET_KEY',
+        color: '#a371f7',
+        packets: [
+          { from: [372,380], to: [282,370], color: '#a371f7', label: 'JWT token' }
+        ]
+      },
+      {
+        title: 'Response: LoginResponse',
+        detail: '{token, username, role}\nHTTP 200 OK',
+        color: '#3fb950',
+        packets: [
+          { from: [282,355], to: [183,200], color: '#3fb950', label: '200 + JWT' }
+        ]
+      },
+      {
+        title: 'Frontend stores JWT',
+        detail: 'authService.setToken(token)\nlocalStorage.setItem("jwt_token", token)',
+        color: '#58a6ff',
+        packets: [
+          { from: [105,200], to: [105,110], color: '#58a6ff', label: 'isAuthenticated=true' }
+        ]
+      },
+      {
+        title: 'All future requests include JWT',
+        detail: 'Axios interceptor adds "Authorization: Bearer {token}"\nJwtFilter validates on every request',
+        color: '#79c0ff',
+        packets: [
+          { from: [105,330], to: [228,120], color: '#79c0ff', label: 'Bearer token attached' }
+        ]
+      }
+    ]
+  },
+
+  cancel: {
+    label: 'Cancel Task',
+    steps: [
+      {
+        title: 'User clicks Cancel in TaskList',
+        detail: 'Frontend calls DELETE /api/tasks/{taskId}/cancel\nAxios attaches Bearer JWT header',
+        color: '#f85149',
+        packets: [
+          { from: [105,110], to: [183,330], color: '#f85149', label: 'cancel click' }
+        ]
+      },
+      {
+        title: 'JwtFilter validates token',
+        detail: 'Extracts username from JWT, sets SecurityContext\nRequest forwarded to controller',
+        color: '#a371f7',
+        packets: [
+          { from: [183,330], to: [228,120], color: '#a371f7', label: 'POST + JWT' },
+          { from: [282,155], to: [282,180], color: '#a371f7', label: 'Auth OK' }
+        ]
+      },
+      {
+        title: 'TaskController.cancelTask()',
+        detail: 'Calls taskService.cancelTask(taskId)\nNo @PreAuthorize needed — user can cancel own tasks',
+        color: '#3fb950',
+        packets: [
+          { from: [342,210], to: [372,210], color: '#3fb950', label: 'cancelTask(id)' }
+        ]
+      },
+      {
+        title: 'TaskService fetches current state',
+        detail: 'taskService.getTask(taskId) → Redis\nVerifies task exists before updating',
+        color: '#58a6ff',
+        packets: [
+          { from: [500,190], to: [556,130], color: '#58a6ff', label: 'GET task:{id}' }
+        ]
+      },
+      {
+        title: 'task.status → CANCELLED',
+        detail: 'Distinct from FAILED (user-initiated vs system error)\ntask.setStatus(CANCELLED)\ntaskService.updateTask(task)',
+        color: '#f85149',
+        packets: [
+          { from: [500,190], to: [556,130], color: '#f85149', label: 'SET CANCELLED' }
+        ]
+      },
+      {
+        title: 'Idempotency: worker skips task',
+        detail: 'If Kafka redelivers this message, handleIncoming() re-fetches Redis state\nStatus == CANCELLED → ack + return (no re-execution)',
+        color: '#d29922',
+        packets: [
+          { from: [643,276], to: [680,410], color: '#d29922', label: 'skip CANCELLED' }
+        ]
+      },
+      {
+        title: 'WebSocket push → CANCELLED',
+        detail: 'sendTaskUpdate(task) broadcasts CANCELLED status\nAll connected clients notified instantly',
+        color: '#f0883e',
+        packets: [
+          { from: [640,440], to: [340,297], color: '#f85149', label: 'WS update' },
+          { from: [282,270], to: [105,265], color: '#f85149', label: 'CANCELLED badge' }
+        ]
+      },
+      {
+        title: 'Statistics updated',
+        detail: 'GET /api/tasks/statistics returns cancelledCount separately\ngetTaskStatistics() counts CANCELLED distinct from FAILED',
+        color: '#58a6ff',
+        packets: [
+          { from: [105,110], to: [183,330], color: '#79c0ff', label: 'GET /statistics' }
+        ]
+      }
+    ]
+  },
+
+  realtime: {
+    label: 'Real-time WebSocket Update',
+    steps: [
+      {
+        title: 'Frontend connects WebSocket',
+        detail: 'new SockJS("/ws") → STOMP client\nsubscribe("/topic/task-updates", handler)',
+        color: '#f0883e',
+        packets: [
+          { from: [183,270], to: [222,297], color: '#f0883e', label: 'STOMP connect' }
+        ]
+      },
+      {
+        title: 'WebSocketConfig registers /ws',
+        detail: 'STOMP endpoint at /ws with SockJS fallback\nAllowed origin: localhost:3000',
+        color: '#f0883e',
+        packets: []
+      },
+      {
+        title: 'TaskWorker finishes task',
+        detail: 'executeTask() finally block runs\ntask.status = COMPLETED | FAILED | RETRYING',
+        color: '#3fb950',
+        packets: []
+      },
+      {
+        title: 'sendTaskUpdate() called',
+        detail: 'messagingTemplate.convertAndSend(\n  "/topic/task-updates", task)',
+        color: '#f0883e',
+        packets: [
+          { from: [640,440], to: [340,297], color: '#f0883e', label: 'push to /topic' }
+        ]
+      },
+      {
+        title: 'STOMP broker routes message',
+        detail: 'In-memory SimpleBroker forwards to\nall subscribers of /topic/task-updates',
+        color: '#f0883e',
+        packets: [
+          { from: [282,270], to: [105,265], color: '#f0883e', label: 'task update frame' }
+        ]
+      },
+      {
+        title: 'Frontend receives frame',
+        detail: 'STOMP subscription callback fires\nParses Task JSON from message body',
+        color: '#58a6ff',
+        packets: []
+      },
+      {
+        title: 'TaskList re-renders',
+        detail: 'State update: replace task in list by id\nStatus chip color changes instantly',
+        color: '#58a6ff',
+        packets: [
+          { from: [105,265], to: [105,110], color: '#58a6ff', label: 'update task row' }
+        ]
+      },
+      {
+        title: 'Dashboard auto-refresh (30s)',
+        detail: 'setInterval(() => fetchStats(), 30000)\nFetches GET /tasks/statistics from REST',
+        color: '#79c0ff',
+        packets: [
+          { from: [105,110], to: [183,330], color: '#79c0ff', label: 'GET /tasks/statistics' },
+          { from: [228,120], to: [282,180], color: '#79c0ff', label: 'after JWT filter' }
+        ]
+      }
+    ]
+  }
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let currentScenario = null;
+let currentStep = -1;
+let isRunning = false;
+let animTimeout = null;
+let packetAnims = [];
+
+// ─── Highlight a component ────────────────────────────────────────────────────
+const originalStrokes = {};
+function highlightComp(id, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!originalStrokes[id]) originalStrokes[id] = el.getAttribute('stroke') || '#30363d';
+  el.setAttribute('stroke', color);
+  el.setAttribute('stroke-width', '2.5');
+  el.style.filter = `drop-shadow(0 0 6px ${color})`;
+}
+function resetComp(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.setAttribute('stroke', originalStrokes[id] || '#30363d');
+  el.setAttribute('stroke-width', '1.5');
+  el.style.filter = '';
+}
+function resetAllComps() {
+  ['comp-frontend','comp-auth-ui','comp-ws-client','comp-axios',
+   'comp-jwt-filter','comp-controller','comp-ws-server','comp-auth-ctrl',
+   'comp-taskservice','comp-jwtservice','comp-redis','comp-kafka',
+   'comp-worker','comp-h2','topic-urgent','topic-high','topic-normal',
+   'topic-low','topic-retry'].forEach(resetComp);
+}
+
+// ─── Packet animation ─────────────────────────────────────────────────────────
+function animatePacket(from, to, color, label, duration, onDone) {
+  const svg = document.getElementById('arch');
+  const g = document.getElementById('packets');
+
+  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  circle.setAttribute('r', '7');
+  circle.setAttribute('fill', color);
+  circle.setAttribute('opacity', '0.95');
+  circle.style.filter = `drop-shadow(0 0 5px ${color})`;
+
+  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  text.setAttribute('text-anchor', 'middle');
+  text.setAttribute('font-size', '7.5');
+  text.setAttribute('fill', color);
+  text.setAttribute('dy', '-11');
+  text.setAttribute('font-family', 'monospace');
+  text.textContent = label;
+
+  const trail = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  trail.setAttribute('stroke', color);
+  trail.setAttribute('stroke-width', '1.5');
+  trail.setAttribute('opacity', '0.35');
+  trail.setAttribute('x1', from[0]); trail.setAttribute('y1', from[1]);
+  trail.setAttribute('x2', from[0]); trail.setAttribute('y2', from[1]);
+
+  g.appendChild(trail);
+  g.appendChild(circle);
+  g.appendChild(text);
+
+  let start = null;
+  function frame(ts) {
+    if (!start) start = ts;
+    const progress = Math.min((ts - start) / duration, 1);
+    const ease = progress < 0.5 ? 2*progress*progress : -1+(4-2*progress)*progress;
+    const x = from[0] + (to[0]-from[0]) * ease;
+    const y = from[1] + (to[1]-from[1]) * ease;
+    circle.setAttribute('cx', x);
+    circle.setAttribute('cy', y);
+    text.setAttribute('x', x);
+    text.setAttribute('y', y);
+    trail.setAttribute('x2', x);
+    trail.setAttribute('y2', y);
+
+    if (progress < 1) {
+      const id = requestAnimationFrame(frame);
+      packetAnims.push(id);
+    } else {
+      setTimeout(() => {
+        g.removeChild(circle);
+        g.removeChild(text);
+        g.removeChild(trail);
+      }, 300);
+      if (onDone) onDone();
+    }
+  }
+  const id = requestAnimationFrame(frame);
+  packetAnims.push(id);
+}
+
+function clearPackets() {
+  packetAnims.forEach(cancelAnimationFrame);
+  packetAnims = [];
+  document.getElementById('packets').innerHTML = '';
+}
+
+// ─── Component highlight map per scenario step ────────────────────────────────
+const stepHighlights = {
+  submit: [
+    ['comp-frontend','comp-axios'],
+    ['comp-axios'],
+    ['comp-jwt-filter'],
+    ['comp-controller'],
+    ['comp-taskservice'],
+    ['comp-taskservice','comp-redis'],
+    ['comp-taskservice','comp-kafka','topic-high'],
+    ['comp-controller','comp-frontend'],
+    ['comp-frontend']
+  ],
+  process: [
+    ['comp-kafka','topic-high','comp-worker'],
+    ['comp-worker'],
+    ['comp-worker','comp-redis'],
+    ['comp-worker','comp-redis'],
+    ['comp-worker','comp-ws-server','comp-ws-client'],
+    ['comp-worker'],
+    ['comp-worker'],
+    ['comp-worker','comp-redis'],
+    ['comp-worker'],
+    ['comp-worker','comp-ws-server','comp-ws-client','comp-frontend']
+  ],
+  retry: [
+    ['comp-worker'],
+    ['comp-worker'],
+    ['comp-worker','comp-redis','topic-retry'],
+    ['comp-worker'],
+    ['comp-worker','topic-retry'],
+    ['topic-retry','comp-worker'],
+    ['comp-worker','topic-retry'],
+    ['comp-worker'],
+    ['comp-worker','comp-redis'],
+    ['comp-worker','comp-ws-server','comp-ws-client']
+  ],
+  auth: [
+    ['comp-auth-ui'],
+    ['comp-auth-ui','comp-axios'],
+    ['comp-jwt-filter'],
+    ['comp-auth-ctrl'],
+    ['comp-auth-ctrl','comp-jwtservice','comp-h2'],
+    ['comp-h2'],
+    ['comp-jwtservice'],
+    ['comp-auth-ctrl','comp-auth-ui'],
+    ['comp-auth-ui'],
+    ['comp-axios','comp-jwt-filter']
+  ],
+  cancel: [
+    ['comp-frontend','comp-axios'],
+    ['comp-jwt-filter'],
+    ['comp-controller'],
+    ['comp-taskservice','comp-redis'],
+    ['comp-taskservice','comp-redis'],
+    ['comp-kafka','comp-worker'],
+    ['comp-worker','comp-ws-server','comp-ws-client','comp-frontend'],
+    ['comp-taskservice','comp-frontend']
+  ],
+  realtime: [
+    ['comp-ws-client','comp-ws-server'],
+    ['comp-ws-server'],
+    ['comp-worker'],
+    ['comp-worker','comp-ws-server'],
+    ['comp-ws-server','comp-ws-client'],
+    ['comp-ws-client'],
+    ['comp-ws-client','comp-frontend'],
+    ['comp-frontend','comp-axios']
+  ]
+};
+
+// ─── Run a scenario ───────────────────────────────────────────────────────────
+function runScenario(name) {
+  if (animTimeout) clearTimeout(animTimeout);
+  clearPackets();
+  resetAllComps();
+
+  document.querySelectorAll('.btn[id^=btn-]').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + name).classList.add('active');
+
+  currentScenario = name;
+  currentStep = -1;
+  isRunning = true;
+
+  renderSteps();
+  nextStep();
+}
+
+function renderSteps() {
+  const sc = scenarios[currentScenario];
+  const list = document.getElementById('stepsList');
+  list.innerHTML = '';
+  sc.steps.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'step-item';
+    div.id = 'step-' + i;
+    div.innerHTML = `
+      <div class="step-num">${i+1}</div>
+      <div class="step-text">
+        <strong>${s.title}</strong>
+        <span>${s.detail.replace(/\n/g,'<br>')}</span>
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+function nextStep() {
+  const sc = scenarios[currentScenario];
+  if (!sc) return;
+
+  currentStep++;
+  if (currentStep >= sc.steps.length) {
+    isRunning = false;
+    updateProgress();
+    return;
+  }
+
+  resetAllComps();
+  const step = sc.steps[currentStep];
+  const highlights = (stepHighlights[currentScenario] || [])[currentStep] || [];
+  highlights.forEach(id => highlightComp(id, step.color));
+
+  // Update step list
+  document.querySelectorAll('.step-item').forEach((el, i) => {
+    el.classList.remove('active','done','highlight');
+    if (i < currentStep) el.classList.add('done');
+    else if (i === currentStep) { el.classList.add('highlight'); el.scrollIntoView({block:'nearest'}); }
+  });
+
+  updateProgress();
+
+  // Animate packets
+  const packets = step.packets || [];
+  let done = 0;
+  if (packets.length === 0) {
+    scheduleNext(700);
+  } else {
+    const dur = Math.round(600 / speedMult);
+    packets.forEach(p => {
+      animatePacket(p.from, p.to, p.color, p.label, dur, () => {
+        done++;
+        if (done === packets.length) scheduleNext(400);
+      });
+    });
+  }
+}
+
+function scheduleNext(baseDelay) {
+  const delay = Math.round(baseDelay / speedMult) + Math.round(900 / speedMult);
+  animTimeout = setTimeout(nextStep, delay);
+}
+
+function updateProgress() {
+  const sc = scenarios[currentScenario];
+  if (!sc) return;
+  const total = sc.steps.length;
+  const done = currentStep + 1;
+  const pct = Math.round((done / total) * 100);
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent =
+    isRunning ? `Step ${done} of ${total}: ${sc.steps[Math.min(currentStep,total-1)]?.title || ''}` : 'Completed';
+  document.getElementById('progressPct').textContent = pct + '%';
+}
+
+// ─── Replay ───────────────────────────────────────────────────────────────────
+function replayScenario() {
+  if (currentScenario) runScenario(currentScenario);
+}
+
+// ─── Stop ─────────────────────────────────────────────────────────────────────
+function stopScenario() {
+  if (animTimeout) { clearTimeout(animTimeout); animTimeout = null; }
+  clearPackets();
+  resetAllComps();
+  isRunning = false;
+  document.querySelectorAll('.step-item').forEach(el => el.classList.remove('highlight'));
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressText').textContent = 'Stopped — press Replay or pick a scenario';
+  document.getElementById('progressPct').textContent = '';
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  runScenario('submit');
+});
+</script>
+</body>
+</html>
