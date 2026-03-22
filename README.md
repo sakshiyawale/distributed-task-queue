@@ -91,15 +91,6 @@ npm install
 npm start
 # Frontend runs on http://localhost:3000
 ```
-
-### 5. Access
-
-| URL | Description |
-|---|---|
-| http://localhost:3000 | React dashboard |
-| http://localhost:8080 | REST API |
-| http://localhost:8080/h2-console | H2 DB console (JDBC: `jdbc:h2:mem:testdb`) |
-
 ### Docker (full stack)
 
 ```bash
