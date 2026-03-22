@@ -72,7 +72,6 @@ docker-compose up -d zookeeper kafka redis
 
 ```bash
 export JWT_SECRET="dev-secret-change-me-in-production-min-32-chars"
-export CORS_ORIGINS="http://localhost:3000"
 ```
 
 ### 3. Start the Backend
@@ -80,7 +79,6 @@ export CORS_ORIGINS="http://localhost:3000"
 ```bash
 mvn clean package
 mvn spring-boot:run
-# Backend runs on http://localhost:8080
 ```
 
 ### 4. Start the Frontend
@@ -89,7 +87,6 @@ mvn spring-boot:run
 cd task-queue-frontend
 npm install
 npm start
-# Frontend runs on http://localhost:3000
 ```
 ### Docker (full stack)
 
